@@ -3,7 +3,7 @@ pipeline {
 
     tools {
         jdk 'jdk17'
-        maven 'maven3' // Ensure this matches Jenkins tool config
+        maven 'maven3'
     }
 
     environment {
@@ -56,18 +56,12 @@ pipeline {
                 sh 'mkdir -p target && trivy fs . > target/trivyfs.txt'
             }
         }
-        stage("TRIVY Image Scan"){
-            steps{
-                sh "trivy image manavpamnani06/sonarqube:latest > trivyimage.txt" 
-            }
-        }
-        
+
         stage('Docker Build & Push') {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'dockerhub', toolName: 'Jenkins-Pull-Push') {
-                        sh "docker build -t boardgame-app ."
-                        sh "docker tag boardgame-app manavpamnani06/boardgame-app:latest"
+                        sh "docker build -t manavpamnani06/boardgame-app:latest ."
                         sh "docker push manavpamnani06/boardgame-app:latest"
                     }
                 }
@@ -82,38 +76,68 @@ pipeline {
             }
             steps {
                 script {
-                    nexusArtifactUploader(
-                        nexusVersion: 'nexus3',
-                        protocol: 'http',
-                        nexusUrl: '13.234.115.100:8081',
-                        groupId: 'com.boardgame',
-                        version: "${BUILD_VERSION}",
-                        repository: 'BoardGame-release',
-                        credentialsId: 'nexus-auth',
-                        artifacts: [[
-                            artifactId: 'boardgame-app',
+                    def readPomVersion = readMavenPom file: 'pom.xml'
+                    def versionTag = "${readPomVersion.version}-${BUILD_NUMBER}"
+
+                    nexusArtifactUploader artifacts: [
+                        [
+                            artifactId: 'database_service_project',
                             classifier: '',
                             file: 'target/jacoco.exec',
                             type: 'jar'
-                        ]]
-                    )
+                        ]
+                    ],
+                    credentialsId: 'nexus-auth',
+                    groupId: 'com.javaproject',
+                    nexusUrl: '13.235.23.68:8081',
+                    nexusVersion: 'nexus3',
+                    protocol: 'http',
+                    repository: 'BoardGame-Release',
+                    version: versionTag
+                }
+            }    
+        }
+
+        stage("Trivy Image Scan") {
+            steps {
+                sh 'trivy image manavpamnani06/boardgame-app:latest > target/trivyimg.txt'
+            }
+        }
+        
+        stage('Set Kubernetes Context') {
+            steps {
+                script {
+                    // Ensure kubectl uses the correct context
+                    sh 'kubectl config use-context arn:aws:eks:ap-south-1:061039777231:cluster/boardgame-cluster'
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    dir('Kubernetes') {
+                       kubeconfig(credentialsId: 'kubernetes', serverUrl: ''){
+                        sh 'kubectl delete --all pods'
+                        sh 'kubectl apply -f deployment-service.yml'
+                        }
+                    }
                 }
             }
         }
     }
-        
+
     post {
         always {
-            emailext attachLog: true,
+            emailext(
+                attachLog: true,
                 subject: "'${currentBuild.result}'",
-                body: "Project: ${env.JOB_NAME}<br/>" +
-                    "Build Number: ${env.BUILD_NUMBER}<br/>" +
-                    "URL: ${env.BUILD_URL}<br/>",
+                body: """Project: ${env.JOB_NAME}<br/>
+                         Build Number: ${env.BUILD_NUMBER}<br/>
+                         URL: ${env.BUILD_URL}<br/>""",
                 to: 'manavpamnani03@gmail.com',
-                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
-
-            echo "Pipeline completed. Cleaning workspace..."
-            cleanWs()
+                attachmentsPattern: 'target/trivyfs.txt,target/trivyimg.txt'
+            )
         }
     }
 }
