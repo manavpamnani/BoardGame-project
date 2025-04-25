@@ -95,7 +95,7 @@ pipeline {
                     repository: 'BoardGame-Release',
                     version: versionTag
                 }
-            }    
+            }
         }
 
         stage("Trivy Image Scan") {
@@ -103,7 +103,7 @@ pipeline {
                 sh 'trivy image manavpamnani06/boardgame-app:latest > target/trivyimg.txt'
             }
         }
-        
+
         stage('Set Kubernetes Context') {
             steps {
                 script {
@@ -117,11 +117,23 @@ pipeline {
             steps {
                 script {
                     dir('Kubernetes') {
-                       kubeconfig(credentialsId: 'kubernetes', serverUrl: ''){
-                        sh 'kubectl delete --all pods'
-                        sh 'kubectl apply -f deployment-service.yml'
+                        kubeconfig(credentialsId: 'kubernetes', serverUrl: '') {
+                            sh 'kubectl delete --all pods'
+                            sh 'kubectl apply -f deployment-service.yml'
                         }
                     }
+                }
+            }
+        }
+
+        stage('Run Jar Locally') {
+            steps {
+                script {
+                    // Run the jar in background
+                    sh '''
+                        nohup java -jar target/database_service_project-0.0.7.jar --server.port=8082 > target/jar-output.log 2>&1 &
+                        echo "Started new jar on port 8082"
+                    '''
                 }
             }
         }
